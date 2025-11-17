@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, Tuple
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -47,6 +47,7 @@ class CreateOrderRequest(PricingRequest):
 class CreateOrderResponse(BaseModel):
     order_id: str
     total: float
+    approval_url: Optional[str] = None
 
 
 class CaptureOrderRequest(BaseModel):
@@ -79,7 +80,7 @@ def is_eu_country(country: str) -> bool:
     return country.strip().lower() in eu_countries
 
 
-def calculate_shipping(quantity: int, address: Address) -> tuple[float, str]:
+def calculate_shipping(quantity: int, address: Address) -> Tuple[float, str]:
     # Domestic Germany
     if is_germany(address.country):
         if address.city.strip().lower() == "berlin":
@@ -217,7 +218,17 @@ def create_order(payload: CreateOrderRequest):
         raise HTTPException(status_code=500, detail=f"PayPal order creation failed: {resp.text[:300]}")
 
     data = resp.json()
-    return CreateOrderResponse(order_id=data.get("id"), total=pricing.total)
+    approval = None
+    try:
+        links = data.get("links", [])
+        for l in links:
+            if l.get("rel") == "approve":
+                approval = l.get("href")
+                break
+    except Exception:
+        approval = None
+
+    return CreateOrderResponse(order_id=data.get("id"), total=pricing.total, approval_url=approval)
 
 
 @app.post("/api/checkout/capture-order")
